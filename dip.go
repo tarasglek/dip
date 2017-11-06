@@ -22,6 +22,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -94,7 +96,7 @@ func main() {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	ingressIP := flag.String("ingress_host", "127.0.0.1", "Ip address to redirect to")
+	ingressControllerIP := flag.String("ingress_controller_ip", "", "IP address the resolve ingress names to. Leave empty to resolve this is same as kubeconfig hostname")
 	hostsFile := flag.String("hosts_file", "/etc/hosts", "Ip address to redirect to")
 	flag.Parse()
 
@@ -102,6 +104,21 @@ func main() {
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err.Error())
+	}
+
+	if *ingressControllerIP == "" {
+		controllerUrl, err := url.Parse(config.Host)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		host, _, _ := net.SplitHostPort(controllerUrl.Host)
+
+		ips, err := net.LookupHost(host)
+		if err != nil {
+			panic(err.Error())
+		}
+		ingressControllerIP = &ips[0]
 	}
 
 	// create the clientset
@@ -130,7 +147,7 @@ func main() {
 		}
 		if !reflect.DeepEqual(old_hosts, new_hosts) {
 			old_hosts = new_hosts
-			err := updateHosts(&old_hosts, ingressIP, hostsFile)
+			err := updateHosts(&old_hosts, ingressControllerIP, hostsFile)
 			if err != nil {
 				panic(err.Error())
 			}
