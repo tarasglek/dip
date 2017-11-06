@@ -35,7 +35,7 @@ import (
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
-func updateHosts(hosts *map[string]bool, ingressIP *string, hostsFile *string) error {
+func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string) error {
 	mySuffix := " # devingressproxy\n"
 	newFileName := *hostsFile + ".new"
 	inFile, err := os.Open(*hostsFile)
@@ -76,7 +76,8 @@ func updateHosts(hosts *map[string]bool, ingressIP *string, hostsFile *string) e
 		return err
 	}
 
-	for host := range *hosts {
+	for host, namespace := range *hosts {
+		fmt.Printf("'%s' in '%s'\n", host, namespace)
 		writer.WriteString(*ingressIP + " " + host + mySuffix)
 	}
 	err = writer.Flush()
@@ -108,17 +109,23 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	old_hosts := map[string]bool{}
+	old_hosts := map[string]string{}
 	for {
-		new_hosts := map[string]bool{}
+		new_hosts := map[string]string{}
 
-		ingresses, err := clientset.ExtensionsV1beta1().Ingresses("kube-system").List(metav1.ListOptions{})
+		namespaces, err := clientset.CoreV1().Namespaces().List(metav1.ListOptions{})
 		if err != nil {
 			panic(err.Error())
 		}
-		for _, ingress := range ingresses.Items {
-			for _, rule := range ingress.Spec.Rules {
-				new_hosts[rule.Host] = true
+		for _, namespace := range namespaces.Items {
+			ingresses, err := clientset.ExtensionsV1beta1().Ingresses(namespace.Name).List(metav1.ListOptions{})
+			if err != nil {
+				panic(err.Error())
+			}
+			for _, ingress := range ingresses.Items {
+				for _, rule := range ingress.Spec.Rules {
+					new_hosts[rule.Host] = namespace.Name
+				}
 			}
 		}
 		if !reflect.DeepEqual(old_hosts, new_hosts) {
@@ -127,7 +134,7 @@ func main() {
 			if err != nil {
 				panic(err.Error())
 			}
-			fmt.Printf("Wrote out %d ingresses to %s\n", len(ingresses.Items), *hostsFile)
+			fmt.Printf("Wrote out %d ingresses to %s\n", len(new_hosts), *hostsFile)
 		}
 		time.Sleep(10 * time.Second)
 	}
