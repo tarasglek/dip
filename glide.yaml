@@ -1,0 +1,4 @@
+package: ( your project's import path ) # e.g. github.com/foo/bar
+import:
+- package: k8s.io/client-go
+  version: v5.0.1
