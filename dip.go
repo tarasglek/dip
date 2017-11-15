@@ -98,6 +98,7 @@ func main() {
 	}
 	ingressControllerIP := flag.String("ingress_controller_ip", "", "IP address the resolve ingress names to. Leave empty to resolve this is same as kubeconfig hostname")
 	hostsFile := flag.String("hosts_file", "/etc/hosts", "Ip address to redirect to")
+	runForever := flag.Bool("run-forever", true, "Continuously poll kubeconfig & update /etc/hosts")
 	flag.Parse()
 
 	// use the current context in kubeconfig
@@ -107,12 +108,12 @@ func main() {
 	}
 
 	if *ingressControllerIP == "" {
-		controllerUrl, err := url.Parse(config.Host)
+		controllerURL, err := url.Parse(config.Host)
 		if err != nil {
 			panic(err.Error())
 		}
 
-		host, _, _ := net.SplitHostPort(controllerUrl.Host)
+		host, _, _ := net.SplitHostPort(controllerURL.Host)
 
 		ips, err := net.LookupHost(host)
 		if err != nil {
@@ -126,9 +127,9 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	old_hosts := map[string]string{}
+	oldHosts := map[string]string{}
 	for {
-		new_hosts := map[string]string{}
+		newHosts := map[string]string{}
 
 		namespaces, err := clientset.CoreV1().Namespaces().List(metav1.ListOptions{})
 		if err != nil {
@@ -141,17 +142,20 @@ func main() {
 			}
 			for _, ingress := range ingresses.Items {
 				for _, rule := range ingress.Spec.Rules {
-					new_hosts[rule.Host] = namespace.Name
+					newHosts[rule.Host] = namespace.Name
 				}
 			}
 		}
-		if !reflect.DeepEqual(old_hosts, new_hosts) {
-			old_hosts = new_hosts
-			err := updateHosts(&old_hosts, ingressControllerIP, hostsFile)
+		if !reflect.DeepEqual(oldHosts, newHosts) {
+			oldHosts = newHosts
+			err := updateHosts(&oldHosts, ingressControllerIP, hostsFile)
 			if err != nil {
 				panic(err.Error())
 			}
-			fmt.Printf("Wrote out %d ingresses to %s\n", len(new_hosts), *hostsFile)
+			fmt.Printf("Wrote out %d ingresses to %s\n", len(newHosts), *hostsFile)
+		}
+		if *runForever == false {
+			break
 		}
 		time.Sleep(10 * time.Second)
 	}
