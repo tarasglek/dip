@@ -1,8 +1,12 @@
 MYPKG=github.com/tarasglek/devingressproxy
 CROSSCOMPILE=linux
+BINARY=k8s-hosts-sync
 
-dip.linux:
-	$(MAKE) compile CROSSCOMPILE=linux OUTPUT=dip.linux
+$(BINARY): dip.go
+	$(MAKE) compile CROSSCOMPILE=linux OUTPUT=$@
+
+install: $(BINARY)
+	cp $(BINARY) /usr/local/bin/$(BINARY)
 
 compile: vendor
 	docker run --rm -it -v $(PWD):/go/src/$(MYPKG) -w /go/src/$(MYPKG) \
