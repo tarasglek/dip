@@ -54,6 +54,13 @@ func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string)
 
 	writer := bufio.NewWriter(outFile)
 
+	for host, namespace := range *hosts {
+		fmt.Printf("'%s' in '%s'\n", host, namespace)
+		_, writeErr := writer.WriteString(*ingressIP + " " + host + mySuffix)
+		if writeErr != nil {
+			return writeErr
+		}
+	}
 	// Start reading from the file with a reader.
 	reader := bufio.NewReader(inFile)
 
@@ -78,10 +85,6 @@ func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string)
 		return err
 	}
 
-	for host, namespace := range *hosts {
-		fmt.Printf("'%s' in '%s'\n", host, namespace)
-		writer.WriteString(*ingressIP + " " + host + mySuffix)
-	}
 	err = writer.Flush()
 	if err != nil {
 		return err
