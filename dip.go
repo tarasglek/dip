@@ -37,7 +37,7 @@ import (
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
-func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string) error {
+func updateHosts(hosts *map[string]string, hostsFile *string) error {
 	mySuffix := " # devingressproxy\n"
 	newFileName := *hostsFile + ".new"
 	inFile, err := os.Open(*hostsFile)
@@ -54,9 +54,9 @@ func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string)
 
 	writer := bufio.NewWriter(outFile)
 
-	for host, namespace := range *hosts {
-		fmt.Printf("'%s' in '%s'\n", host, namespace)
-		_, writeErr := writer.WriteString(*ingressIP + " " + host + mySuffix)
+	for host, ip := range *hosts {
+		fmt.Printf("%s -> %s\n", host, ip)
+		_, writeErr := writer.WriteString(ip + " " + host + mySuffix)
 		if writeErr != nil {
 			return writeErr
 		}
@@ -89,7 +89,11 @@ func updateHosts(hosts *map[string]string, ingressIP *string, hostsFile *string)
 	if err != nil {
 		return err
 	}
-	return os.Rename(newFileName, *hostsFile)
+	err = os.Rename(newFileName, *hostsFile)
+	if err != nil {
+		fmt.Printf("Wrote out %d addresses to %s\n", len(*hosts), *hostsFile)
+	}
+	return err
 }
 
 func main() {
@@ -99,9 +103,9 @@ func main() {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	ingressControllerIP := flag.String("ingress_controller_ip", "", "IP address the resolve ingress names to. Leave empty to resolve this is same as kubeconfig hostname")
-	hostsFile := flag.String("hosts_file", "/etc/hosts", "Ip address to redirect to")
-	runForever := flag.Bool("run-forever", true, "Continuously poll kubeconfig & update /etc/hosts")
+	ingressControllerIP := flag.String("controller_ip", "", "Force ingress to resolve to this ip. Will add this to hosts file to match .kube/config")
+	hostsFile := flag.String("hosts_file", "/etc/hosts", "/etc/hosts or equivalent file")
+	runForever := flag.Bool("run-forever", false, "Continuously poll kubeconfig & update /etc/hosts")
 	flag.Parse()
 
 	// use the current context in kubeconfig
@@ -110,19 +114,26 @@ func main() {
 		panic(err.Error())
 	}
 
-	if *ingressControllerIP == "" {
-		controllerURL, err := url.Parse(config.Host)
-		if err != nil {
-			panic(err.Error())
-		}
+	controllerURL, err := url.Parse(config.Host)
+	if err != nil {
+		panic(err.Error())
+	}
+	host, _, _ := net.SplitHostPort(controllerURL.Host)
 
-		host, _, _ := net.SplitHostPort(controllerURL.Host)
+	oldHosts := map[string]string{}
+	if *ingressControllerIP == "" {
 
 		ips, err := net.LookupHost(host)
 		if err != nil {
 			panic(err.Error())
 		}
 		ingressControllerIP = &ips[0]
+	} else {
+		oldHosts[host] = *ingressControllerIP
+		err := updateHosts(&oldHosts, hostsFile)
+		if err != nil {
+			panic(err.Error())
+		}
 	}
 
 	// create the clientset
@@ -130,7 +141,6 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	oldHosts := map[string]string{}
 	for {
 		newHosts := map[string]string{}
 
@@ -145,17 +155,33 @@ func main() {
 			}
 			for _, ingress := range ingresses.Items {
 				for _, rule := range ingress.Spec.Rules {
-					newHosts[rule.Host] = namespace.Name
+					newHosts[rule.Host] = *ingressControllerIP
 				}
 			}
 		}
+		nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
+		for _, node := range nodes.Items {
+			nodeIP := ""
+			nodeHostname := ""
+			for _, address := range node.Status.Addresses {
+				if address.Type == "InternalIP" {
+					nodeIP = address.Address
+				} else if address.Type == "Hostname" {
+					nodeHostname = address.Address
+				}
+			}
+			if len(nodeIP) > 0 && nodeIP != nodeHostname {
+
+				newHosts[nodeHostname] = nodeIP
+			}
+		}
+
 		if !reflect.DeepEqual(oldHosts, newHosts) {
 			oldHosts = newHosts
-			err := updateHosts(&oldHosts, ingressControllerIP, hostsFile)
+			err := updateHosts(&oldHosts, hostsFile)
 			if err != nil {
 				panic(err.Error())
 			}
-			fmt.Printf("Wrote out %d ingresses to %s\n", len(newHosts), *hostsFile)
 		}
 		if *runForever == false {
 			break
