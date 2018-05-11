@@ -103,10 +103,11 @@ func main() {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	ingressControllerIP := flag.String("controller_ip", "", "Force ingress to resolve to this ip. Will add this to hosts file to match .kube/config")
-	hostsFile := flag.String("hosts_file", "/etc/hosts", "/etc/hosts or equivalent file")
-	ipType := flag.String("ip_type", "InternalIP", "IP to pull out of kubernetes. Either InternalIP or ExternalIP")
+	ingressControllerIP := flag.String("controller-ip", "", "Force ingress to resolve to this ip. Will add this to hosts file to match .kube/config")
+	hostsFile := flag.String("hosts-file", "/etc/hosts", "/etc/hosts or equivalent file")
+	ipType := flag.String("ip-type", "InternalIP", "IP to pull out of kubernetes. Either InternalIP or ExternalIP")
 	runForever := flag.Bool("run-forever", false, "Continuously poll kubeconfig & update /etc/hosts")
+	useControllerIP := flag.Bool("use-controller-ip", true, "Use controller ip if true...use some node ip if false")
 	flag.Parse()
 
 	// use the current context in kubeconfig
@@ -140,6 +141,8 @@ func main() {
 		}
 	}
 
+	ingressIP := *ingressControllerIP
+
 	// create the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -152,17 +155,6 @@ func main() {
 		if err != nil {
 			panic(err.Error())
 		}
-		for _, namespace := range namespaces.Items {
-			ingresses, err := clientset.ExtensionsV1beta1().Ingresses(namespace.Name).List(metav1.ListOptions{})
-			if err != nil {
-				panic(err.Error())
-			}
-			for _, ingress := range ingresses.Items {
-				for _, rule := range ingress.Spec.Rules {
-					newHosts[rule.Host] = *ingressControllerIP
-				}
-			}
-		}
 		nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
 		for _, node := range nodes.Items {
 			nodeIP := ""
@@ -170,6 +162,9 @@ func main() {
 			for _, address := range node.Status.Addresses {
 				if string(address.Type) == *ipType {
 					nodeIP = address.Address
+					if !*useControllerIP && nodeIP != *ingressControllerIP {
+						ingressIP = nodeIP
+					}
 				} else if address.Type == "Hostname" {
 					nodeHostname = address.Address
 				}
@@ -178,7 +173,17 @@ func main() {
 				newHosts[nodeHostname] = nodeIP
 			}
 		}
-
+		for _, namespace := range namespaces.Items {
+			ingresses, err := clientset.ExtensionsV1beta1().Ingresses(namespace.Name).List(metav1.ListOptions{})
+			if err != nil {
+				panic(err.Error())
+			}
+			for _, ingress := range ingresses.Items {
+				for _, rule := range ingress.Spec.Rules {
+					newHosts[rule.Host] = ingressIP
+				}
+			}
+		}
 		if !reflect.DeepEqual(oldHosts, newHosts) {
 			oldHosts = newHosts
 			err := updateHosts(&oldHosts, hostsFile)
