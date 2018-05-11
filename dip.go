@@ -105,6 +105,7 @@ func main() {
 	}
 	ingressControllerIP := flag.String("controller_ip", "", "Force ingress to resolve to this ip. Will add this to hosts file to match .kube/config")
 	hostsFile := flag.String("hosts_file", "/etc/hosts", "/etc/hosts or equivalent file")
+	ipType := flag.String("ip_type", "InternalIP", "IP to pull out of kubernetes. Either InternalIP or ExternalIP")
 	runForever := flag.Bool("run-forever", false, "Continuously poll kubeconfig & update /etc/hosts")
 	flag.Parse()
 
@@ -118,11 +119,14 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	host, _, _ := net.SplitHostPort(controllerURL.Host)
+	host, _, err := net.SplitHostPort(controllerURL.Host)
+	if err != nil {
+		host = controllerURL.Host
+	}
 
 	oldHosts := map[string]string{}
 	if *ingressControllerIP == "" {
-
+		fmt.Printf("Looking up '%s' from %s\n", host, config.Host)
 		ips, err := net.LookupHost(host)
 		if err != nil {
 			panic(err.Error())
@@ -164,14 +168,13 @@ func main() {
 			nodeIP := ""
 			nodeHostname := ""
 			for _, address := range node.Status.Addresses {
-				if address.Type == "InternalIP" {
+				if string(address.Type) == *ipType {
 					nodeIP = address.Address
 				} else if address.Type == "Hostname" {
 					nodeHostname = address.Address
 				}
 			}
 			if len(nodeIP) > 0 && nodeIP != nodeHostname {
-
 				newHosts[nodeHostname] = nodeIP
 			}
 		}
